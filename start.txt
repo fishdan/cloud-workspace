@@ -1,0 +1,74 @@
+You are helping me build a Terraform-based AWS developer workstation platform.  This is a working git repository 
+that we want others to be able to follow and set up their own AWS repository, learning from us as we complete the 
+task.
+
+Goal:
+Create reusable infrastructure that can provision private, secure, per-engineer Ubuntu dev boxes on AWS. These machines should be suitable for VS Code Remote SSH, local browser testing via SSH port forwarding, and optional GUI access later.
+
+Architecture principles:
+
+Terraform owns infrastructure only: networking, EC2, IAM, EBS, security groups, outputs.
+Terraform should not manage day-to-day workstation state.
+cloud-init may perform minimal first-boot bootstrap only.
+Engineer data should live on a persistent encrypted EBS volume, ideally mounted at /workspace or /home.
+EC2 instances should be disposable; volumes and snapshots are precious.
+Prefer repeatability, clarity, and safety over cleverness.
+
+Initial deliverables:
+
+Create a GitHub-ready repo structure:
+modules/devbox/
+environments/dev/
+README.md
+.gitignore
+Implement a reusable Terraform module that provisions:
+Ubuntu 24.04 LTS EC2 instance
+private subnet placement
+no public IPv4 address
+encrypted gp3 EBS root volume
+separate encrypted gp3 workspace volume
+security group allowing SSH only through private/VPC access
+IAM instance profile with least-privilege baseline
+useful tags including engineer name, environment, cost center, and managed-by
+Add support for multiple engineers using for_each, with per-engineer variables:
+username
+SSH public key
+instance type
+workspace disk size
+enabled/disabled flag
+Add minimal cloud-init that:
+creates the engineer user
+installs only basic packages: git, tmux, curl, unzip, build-essential
+mounts the workspace EBS volume
+configures SSH access
+does not install personal dev tools, editor plugins, language runtimes, or app-specific dependencies
+Provide Terraform outputs for:
+instance ID
+private IP
+workspace volume ID
+suggested SSH config snippet
+Include lifecycle safety:
+prevent accidental deletion of persistent workspace volumes
+document how to intentionally destroy a workstation
+document how to snapshot and restore a workspace volume
+Add a README explaining:
+design philosophy
+setup prerequisites
+how to add a new engineer
+how engineers connect with VS Code Remote SSH
+how to forward ports for local browser testing
+cost considerations
+security assumptions
+what Terraform intentionally does not manage
+
+Constraints:
+
+Use the official HashiCorp AWS provider.
+Keep the first version simple.
+Avoid NAT, DCV, golden AMIs, SSO, and auto-shutdown in v1 unless stubbed as future work.
+Do not use Terraform provisioners unless absolutely necessary.
+Prefer cloud-init for first boot only.
+Use clear variable names and safe defaults.
+Make the code readable for a small engineering team.
+
+Before writing code, propose the repo structure and Terraform module interface. Then implement the first working version.

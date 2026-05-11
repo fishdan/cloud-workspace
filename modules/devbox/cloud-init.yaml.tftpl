@@ -1,0 +1,72 @@
+#cloud-config
+package_update: true
+packages:
+  - git
+  - tmux
+  - curl
+  - unzip
+  - build-essential
+
+users:
+  - default
+  - name: ${username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+write_files:
+  - path: /usr/local/sbin/mount-workspace
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      volume_id="${workspace_volume_id}"
+      normalized_volume_id="$${volume_id//-/}"
+      mount_point="/workspace"
+      label="workspace"
+
+      find_device() {
+        for path in /dev/disk/by-id/*; do
+          [ -e "$path" ] || continue
+          case "$path" in
+            *"$volume_id"*|*"$normalized_volume_id"*)
+              readlink -f "$path"
+              return 0
+              ;;
+          esac
+        done
+        return 1
+      }
+
+      device=""
+      for _ in $(seq 1 60); do
+        if device="$(find_device)"; then
+          break
+        fi
+        sleep 5
+      done
+
+      if [ -z "$device" ]; then
+        echo "Workspace volume $volume_id was not found" >&2
+        exit 1
+      fi
+
+      mkdir -p "$mount_point"
+
+      if ! blkid "$device" >/dev/null 2>&1; then
+        mkfs.ext4 -L "$label" "$device"
+      fi
+
+      if ! grep -q "LABEL=$label $mount_point " /etc/fstab; then
+        echo "LABEL=$label $mount_point ext4 defaults,nofail 0 2" >> /etc/fstab
+      fi
+
+      mount "$mount_point"
+      chown ${username}:${username} "$mount_point"
+
+runcmd:
+  - /usr/local/sbin/mount-workspace
