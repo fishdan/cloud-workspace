@@ -8,19 +8,33 @@ variable "cost_center" {
   type        = string
 }
 
+variable "project_name" {
+  description = "Project name used for resource names and tags."
+  type        = string
+  default     = "cloud-desktop"
+}
+
 variable "vpc_id" {
-  description = "ID of the VPC where dev boxes run."
+  description = "ID of the VPC where cloud desktops run."
   type        = string
 }
 
-variable "private_subnet_ids" {
-  description = "Private subnet IDs for dev box placement."
+variable "subnet_ids" {
+  description = "Subnet IDs for cloud desktop placement. Use public subnets when assign_public_ip is true, or private subnets with egress when false."
   type        = list(string)
+  default     = null
+}
 
-  validation {
-    condition     = length(var.private_subnet_ids) > 0
-    error_message = "At least one private subnet ID is required."
-  }
+variable "private_subnet_ids" {
+  description = "Deprecated alias for subnet_ids. Kept for compatibility with the original private-subnet-only module interface."
+  type        = list(string)
+  default     = null
+}
+
+variable "assign_public_ip" {
+  description = "Assign a public IPv4 address to each cloud desktop. Use only with public subnets and tightly scoped SSH ingress."
+  type        = bool
+  default     = false
 }
 
 variable "allowed_ssh_cidr_blocks" {
@@ -38,7 +52,7 @@ variable "ami_id" {
 variable "default_instance_type" {
   description = "Default EC2 instance type for engineers that do not specify one."
   type        = string
-  default     = "t3.large"
+  default     = "t3.small"
 }
 
 variable "default_workspace_size_gb" {
@@ -53,8 +67,27 @@ variable "root_volume_size_gb" {
   default     = 30
 }
 
+variable "tailscale_auth_key" {
+  description = "Optional Tailscale auth key used to join each cloud desktop to a tailnet. When null, Tailscale is not installed."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "tailscale_enable_ssh" {
+  description = "Enable Tailscale SSH on joined cloud desktops. Normal OpenSSH remains configured either way."
+  type        = bool
+  default     = false
+}
+
+variable "tailscale_accept_routes" {
+  description = "Accept routes advertised by other Tailscale subnet routers."
+  type        = bool
+  default     = false
+}
+
 variable "engineers" {
-  description = "Per-engineer dev box configuration."
+  description = "Per-engineer cloud desktop configuration."
   type = map(object({
     username          = string
     ssh_public_key    = string

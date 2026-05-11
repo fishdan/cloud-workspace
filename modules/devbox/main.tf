@@ -13,8 +13,8 @@ data "aws_vpc" "selected" {
   id = var.vpc_id
 }
 
-data "aws_subnet" "private" {
-  for_each = toset(var.private_subnet_ids)
+data "aws_subnet" "selected" {
+  for_each = toset(local.subnet_ids)
   id       = each.value
 }
 
@@ -45,11 +45,24 @@ locals {
     if engineer.enabled
   }
 
-  subnet_ids = var.private_subnet_ids
+  name_prefix = var.project_name
+
+  subnet_ids = var.subnet_ids != null ? var.subnet_ids : (var.private_subnet_ids != null ? var.private_subnet_ids : [])
 
   ami_id = coalesce(var.ami_id, try(data.aws_ami.ubuntu_2404[0].id, null))
 
   ssh_cidr_blocks = var.allowed_ssh_cidr_blocks == null ? [data.aws_vpc.selected.cidr_block] : var.allowed_ssh_cidr_blocks
+
+  tailscale_enabled = var.tailscale_auth_key != null && var.tailscale_auth_key != ""
+  tailscale_ssh_config = {
+    for key, instance in aws_instance.devbox : key => <<-EOT
+      Host ${local.name_prefix}-${key}-ts
+        HostName ${local.name_prefix}-${var.environment}-${key}
+        User ${local.enabled_engineers[key].username}
+        IdentityFile ~/.ssh/id_ed25519
+        IdentitiesOnly yes
+    EOT
+  }
 
   base_tags = merge(
     var.tags,
@@ -57,18 +70,29 @@ locals {
       Environment = var.environment
       CostCenter  = var.cost_center
       ManagedBy   = "terraform"
-      Project     = "cloud-workspace"
+      Project     = var.project_name
     }
   )
 }
 
+resource "terraform_data" "validate_subnets" {
+  input = local.subnet_ids
+
+  lifecycle {
+    precondition {
+      condition     = length(local.subnet_ids) > 0
+      error_message = "At least one subnet ID is required. Set subnet_ids, or private_subnet_ids for compatibility."
+    }
+  }
+}
+
 resource "aws_security_group" "devbox" {
-  name_prefix = "devbox-${var.environment}-"
-  description = "Private SSH access for ${var.environment} dev boxes"
+  name_prefix = "${local.name_prefix}-${var.environment}-"
+  description = "SSH access for ${var.environment} cloud desktops"
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "SSH from private network"
+    description = "SSH from allowed CIDR blocks"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -84,7 +108,7 @@ resource "aws_security_group" "devbox" {
   }
 
   tags = merge(local.base_tags, {
-    Name = "devbox-${var.environment}-ssh"
+    Name = "${local.name_prefix}-${var.environment}-ssh"
   })
 
   lifecycle {
@@ -93,7 +117,7 @@ resource "aws_security_group" "devbox" {
 }
 
 resource "aws_iam_role" "devbox" {
-  name_prefix = "devbox-${var.environment}-"
+  name_prefix = "${local.name_prefix}-${var.environment}-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -109,27 +133,27 @@ resource "aws_iam_role" "devbox" {
   })
 
   tags = merge(local.base_tags, {
-    Name = "devbox-${var.environment}"
+    Name = "${local.name_prefix}-${var.environment}"
   })
 }
 
 resource "aws_iam_instance_profile" "devbox" {
-  name_prefix = "devbox-${var.environment}-"
+  name_prefix = "${local.name_prefix}-${var.environment}-"
   role        = aws_iam_role.devbox.name
 
   tags = merge(local.base_tags, {
-    Name = "devbox-${var.environment}"
+    Name = "${local.name_prefix}-${var.environment}"
   })
 }
 
 resource "aws_key_pair" "engineer" {
   for_each = local.enabled_engineers
 
-  key_name_prefix = "devbox-${var.environment}-${each.key}-"
+  key_name_prefix = "${local.name_prefix}-${var.environment}-${each.key}-"
   public_key      = each.value.ssh_public_key
 
   tags = merge(local.base_tags, each.value.tags, {
-    Name     = "devbox-${var.environment}-${each.key}"
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}"
     Engineer = each.value.username
   })
 }
@@ -137,13 +161,13 @@ resource "aws_key_pair" "engineer" {
 resource "aws_ebs_volume" "workspace" {
   for_each = local.enabled_engineers
 
-  availability_zone = data.aws_subnet.private[local.subnet_ids[each.value.subnet_index % length(local.subnet_ids)]].availability_zone
+  availability_zone = data.aws_subnet.selected[local.subnet_ids[each.value.subnet_index % length(local.subnet_ids)]].availability_zone
   type              = "gp3"
   size              = coalesce(each.value.workspace_size_gb, var.default_workspace_size_gb)
   encrypted         = true
 
   tags = merge(local.base_tags, each.value.tags, {
-    Name     = "devbox-${var.environment}-${each.key}-workspace"
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}-workspace"
     Engineer = each.value.username
     Role     = "workspace"
   })
@@ -160,15 +184,20 @@ resource "aws_instance" "devbox" {
   instance_type               = coalesce(each.value.instance_type, var.default_instance_type)
   subnet_id                   = local.subnet_ids[each.value.subnet_index % length(local.subnet_ids)]
   vpc_security_group_ids      = [aws_security_group.devbox.id]
-  associate_public_ip_address = false
+  associate_public_ip_address = var.assign_public_ip
   iam_instance_profile        = aws_iam_instance_profile.devbox.name
   key_name                    = aws_key_pair.engineer[each.key].key_name
   user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    username            = each.value.username
-    ssh_public_key      = each.value.ssh_public_key
-    workspace_volume_id = aws_ebs_volume.workspace[each.key].id
+    username                = each.value.username
+    ssh_public_key          = each.value.ssh_public_key
+    workspace_volume_id     = aws_ebs_volume.workspace[each.key].id
+    tailscale_enabled       = local.tailscale_enabled
+    tailscale_auth_key      = var.tailscale_auth_key != null ? var.tailscale_auth_key : ""
+    tailscale_hostname      = "${local.name_prefix}-${var.environment}-${each.key}"
+    tailscale_enable_ssh    = var.tailscale_enable_ssh
+    tailscale_accept_routes = var.tailscale_accept_routes
   })
 
   metadata_options {
@@ -183,12 +212,12 @@ resource "aws_instance" "devbox" {
   }
 
   tags = merge(local.base_tags, each.value.tags, {
-    Name     = "devbox-${var.environment}-${each.key}"
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}"
     Engineer = each.value.username
   })
 
   volume_tags = merge(local.base_tags, each.value.tags, {
-    Name     = "devbox-${var.environment}-${each.key}-root"
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}-root"
     Engineer = each.value.username
     Role     = "root"
   })

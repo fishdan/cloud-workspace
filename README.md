@@ -1,15 +1,16 @@
-# AWS Cloud Workspace
+# AWS Cloud Desktop
 
-Terraform for private, per-engineer Ubuntu developer workstations on AWS.
+Terraform for per-engineer Ubuntu developer workstations on AWS.
 
 The design keeps infrastructure and workstation state separate. Terraform owns the VPC placement, EC2 instance, IAM role, security group, EBS volumes, and outputs. Engineer tools, editor extensions, language runtimes, repositories, and application dependencies are intentionally left to the engineer or a separate bootstrap process.
 
 ## Repository Layout
 
 ```text
-modules/devbox/       Reusable Terraform module for engineer workstations
+modules/devbox/       Reusable Terraform module for engineer cloud desktops
 environments/dev/     Example development environment
 README.md             Project overview and operating notes
+AGENTS.md             AI agent guidance for safe repo work
 .gitignore            Terraform and local editor ignores
 ```
 
@@ -17,17 +18,32 @@ README.md             Project overview and operating notes
 
 - EC2 instances are disposable.
 - Encrypted workspace EBS volumes are persistent and protected from accidental Terraform deletion.
-- Instances are private only: no public IPv4 address is assigned.
-- SSH is allowed only from VPC/private CIDR ranges you provide.
+- The current implementation uses public IPv4 plus tightly scoped SSH ingress because it is the simplest path for a small setup.
+- Private networking with Tailscale, VPN, bastion, or NAT-backed private subnets remains supported as an evolution path.
 - Cloud-init performs first-boot basics only: user creation, SSH key setup, basic packages, and workspace mounting.
 - Terraform does not manage personal development state after first boot.
+
+## Access Decision
+
+The default workflow is direct SSH over the instance public IPv4 address, including VS Code Remote SSH and normal SSH local port forwarding. Engineers already understand this workflow, it works naturally with editor tooling, and it lets a service running on the workstation be tested from the engineer's local browser as if it were running on localhost.
+
+This is intentionally pragmatic. The existing AWS account already has a default VPC with public subnets and internet gateway routing. Reusing one of those subnets avoids adding NAT Gateway cost and avoids requiring Tailscale, VPN, Direct Connect, or a bastion before the first workstation is usable.
+
+The tradeoff is exposure: SSH is reachable from the internet wherever the security group allows it. Keep `allowed_ssh_cidr_blocks` to a narrow `/32` for your current public IP whenever possible. Do not use `0.0.0.0/0`.
+
+Alternative access paths:
+
+- **Public SSH, selected for this implementation:** easiest to operate, no NAT Gateway, no overlay network, works directly with VS Code Remote SSH. The downside is that the instance has a public IP and SSH must be carefully restricted.
+- **Tailscale on the instance:** keeps access ergonomic and avoids opening SSH to the internet, but the instance still needs outbound internet to install and join Tailscale. In a private subnet that usually means NAT, or a prebuilt AMI.
+- **Private subnet plus NAT:** best fit for a reusable platform because the instance has no public IP while still having outbound internet for package installs and Tailscale. The downside is NAT Gateway cost and more network infrastructure.
+- **VPN, Direct Connect, or bastion:** mature private access patterns, but they add operational setup before an engineer can connect.
 
 ## Prerequisites
 
 - Terraform 1.5 or newer.
 - AWS credentials configured for the target account.
-- An existing VPC with at least one private subnet.
-- Network path to the VPC for SSH, such as VPN, Direct Connect, bastion, or SSM-based tunneling you manage separately.
+- An existing VPC with at least one subnet. The example uses an existing public subnet.
+- SSH CIDR blocks scoped to trusted source IPs, ideally your current public IP as `/32`.
 - Engineer SSH public keys.
 
 ## Quick Start
@@ -37,12 +53,25 @@ cd environments/dev
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit `terraform.tfvars` with your VPC ID, private subnet IDs, allowed SSH CIDR blocks, and engineers.
+Edit `terraform.tfvars` with your VPC ID, subnet IDs, allowed SSH CIDR blocks, and engineers.
+
+For the public SSH route, set `allowed_ssh_cidr_blocks` to your current public IP as `/32`. For example:
+
+```bash
+curl https://checkip.amazonaws.com
+```
 
 ```bash
 terraform init
 terraform plan
 terraform apply
+```
+
+For local account-specific values that should never be committed, use an ignored live vars file instead:
+
+```bash
+terraform plan -var-file=cloud-desktop.live.tfvars
+terraform apply -var-file=cloud-desktop.live.tfvars
 ```
 
 ## Add A New Engineer
@@ -54,7 +83,7 @@ engineers = {
   alice = {
     username            = "alice"
     ssh_public_key      = "ssh-ed25519 AAAA..."
-    instance_type       = "t3.large"
+    instance_type       = "t3.small"
     workspace_size_gb   = 100
     enabled             = true
   }
@@ -73,17 +102,43 @@ terraform output ssh_config
 
 Add the relevant host block to your SSH config, then use the VS Code Remote SSH extension to connect to that host.
 
-The instance is private, so SSH only works from a network path that can reach the private IP.
+When `assign_public_ip = true`, the generated SSH config points at the instance public IP. When `assign_public_ip = false`, it points at the private IP and you need a private network path such as Tailscale, VPN, Direct Connect, bastion, or SSM-based tunneling.
+
+## Optional Tailscale Access
+
+Tailscale can provide that private network path without assigning public IP addresses to the workstations. To enable it, generate a Tailscale auth key from the admin console and set `tailscale_auth_key` in `terraform.tfvars`:
+
+```hcl
+tailscale_auth_key      = "tskey-auth-REPLACE_ME"
+tailscale_enable_ssh    = false
+tailscale_accept_routes = false
+```
+
+When enabled, cloud-init installs Tailscale, runs `tailscale up`, and sets each node hostname to `${project_name}-${environment}-${engineer_key}`, such as `cloud-desktop-dev-alice`.
+
+After apply, print the generated Tailscale SSH config:
+
+```bash
+terraform output tailscale_ssh_config
+```
+
+Add the relevant host block to your SSH config, then connect with VS Code Remote SSH using the `cloud-desktop-alice-ts` host alias. This still uses normal OpenSSH on the workstation; `tailscale_enable_ssh` controls Tailscale SSH separately and defaults to `false`.
+
+Treat the Tailscale auth key as sensitive. Terraform passes it through EC2 user data, so it can be present in Terraform state and cloud-init logs. Prefer a tagged, reusable, pre-approved auth key scoped for these workstations, and store Terraform state in an encrypted backend with restricted access.
 
 ## Forward Ports For Browser Testing
 
-Forward a local port to a service running on the workstation:
+Use SSH local port forwarding to test a service running on the workstation from your local browser. For a dev server listening on the workstation at `localhost:3000`, forward it to your laptop:
 
 ```bash
-ssh -L 3000:localhost:3000 devbox-alice
+ssh -L 3000:localhost:3000 cloud-desktop-alice
 ```
 
 Then open `http://localhost:3000` on your local machine.
+
+This keeps the browser, cookies, local debugging tools, and OAuth redirect behavior on the engineer's laptop while the application server and code run on the cloud workstation.
+
+If direct SSH is not reachable, an SSM tunnel can provide equivalent local port forwarding, but it is treated as a fallback access mechanism rather than the default developer experience.
 
 ## Workspace Data
 
@@ -109,7 +164,7 @@ Tag snapshots with engineer, environment, and purpose so they can be found later
 
 ## Restore A Workspace Volume
 
-Create a new EBS volume from the snapshot in the same Availability Zone as the target private subnet, then import or wire that volume into Terraform before attaching it to a replacement instance. Do not attach the old and restored volume at the same mount point at the same time.
+Create a new EBS volume from the snapshot in the same Availability Zone as the target subnet, then import or wire that volume into Terraform before attaching it to a replacement instance. Do not attach the old and restored volume at the same mount point at the same time.
 
 For v1, the safest restore flow is:
 
@@ -140,8 +195,8 @@ Main cost drivers are EC2 instance hours, gp3 root volumes, gp3 workspace volume
 
 ## Security Assumptions
 
-- Instances are launched without public IPv4 addresses.
-- Security groups allow SSH only from configured private CIDR ranges.
+- In this implementation, instances may be launched with public IPv4 addresses.
+- Security groups allow SSH only from configured CIDR ranges. For public SSH, use a narrow `/32` source IP whenever possible.
 - Root and workspace volumes are encrypted.
 - IMDSv2 is required.
 - IAM permissions are minimal by default; the instance role has no broad managed policy attached.

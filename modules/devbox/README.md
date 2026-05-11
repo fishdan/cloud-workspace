@@ -1,6 +1,6 @@
 # devbox Module
 
-Creates private Ubuntu developer workstations for a map of engineers.
+Creates private Ubuntu cloud desktops for a map of engineers.
 
 ## Interface
 
@@ -9,16 +9,22 @@ Required inputs:
 - `environment`
 - `cost_center`
 - `vpc_id`
-- `private_subnet_ids`
 - `engineers`
 
 Optional inputs:
 
+- `project_name` for resource names and the `Project` tag. Defaults to `cloud-desktop`.
+- `subnet_ids` for cloud desktop placement. Use public subnets when `assign_public_ip` is `true`, or private subnets with egress when `false`.
+- `private_subnet_ids` as a deprecated compatibility alias for `subnet_ids`.
+- `assign_public_ip` to assign public IPv4 addresses to instances. Defaults to `false`.
 - `ami_id` to pin a specific Ubuntu AMI. When unset, the module discovers the latest Ubuntu 24.04 LTS amd64 gp3 AMI from Canonical.
 - `allowed_ssh_cidr_blocks` to restrict SSH. When unset, the VPC CIDR is used.
 - `default_instance_type`
 - `default_workspace_size_gb`
 - `root_volume_size_gb`
+- `tailscale_auth_key` to install Tailscale and join each cloud desktop to a tailnet. Defaults to `null`.
+- `tailscale_enable_ssh` to enable Tailscale SSH after joining the tailnet. Defaults to `false`.
+- `tailscale_accept_routes` to accept routes advertised by other Tailscale subnet routers. Defaults to `false`.
 - `tags`
 
 Each engineer supports:

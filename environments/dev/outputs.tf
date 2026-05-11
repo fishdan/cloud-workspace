@@ -8,6 +8,11 @@ output "private_ips" {
   value       = module.devbox.private_ips
 }
 
+output "public_ips" {
+  description = "Public IPv4 addresses by engineer key. Values are empty when assign_public_ip is false."
+  value       = module.devbox.public_ips
+}
+
 output "workspace_volume_ids" {
   description = "Persistent workspace EBS volume IDs by engineer key."
   value       = module.devbox.workspace_volume_ids
@@ -16,4 +21,9 @@ output "workspace_volume_ids" {
 output "ssh_config" {
   description = "Suggested SSH config snippets by engineer key."
   value       = module.devbox.ssh_config
+}
+
+output "tailscale_ssh_config" {
+  description = "Suggested SSH config snippets using Tailscale MagicDNS hostnames."
+  value       = module.devbox.tailscale_ssh_config
 }

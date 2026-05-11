@@ -1,16 +1,25 @@
-aws_region  = "us-east-1"
-environment = "dev"
-cost_center = "engineering"
+aws_region   = "us-east-1"
+environment  = "dev"
+cost_center  = "engineering"
+project_name = "cloud-desktop"
+
+# Optional. Generate an auth key from the Tailscale admin console.
+# Prefer a tagged, reusable, pre-approved key for team automation.
+# tailscale_auth_key      = "tskey-auth-REPLACE_ME"
+# tailscale_enable_ssh    = false
+# tailscale_accept_routes = false
 
 vpc_id = "vpc-0123456789abcdef0"
 
-private_subnet_ids = [
+subnet_ids = [
   "subnet-0123456789abcdef0",
-  "subnet-0fedcba9876543210",
 ]
 
+# Public route mode. Restrict this to your current public IP as /32.
+assign_public_ip = true
+
 allowed_ssh_cidr_blocks = [
-  "10.0.0.0/8",
+  "203.0.113.10/32",
 ]
 
 tags = {
@@ -21,7 +30,7 @@ engineers = {
   alice = {
     username          = "alice"
     ssh_public_key    = "ssh-ed25519 AAAA_REPLACE_ME alice@example.com"
-    instance_type     = "t3.large"
+    instance_type     = "t3.small"
     workspace_size_gb = 100
     enabled           = true
     subnet_index      = 0

@@ -70,3 +70,10 @@ write_files:
 
 runcmd:
   - /usr/local/sbin/mount-workspace
+%{ if tailscale_enabled ~}
+  - ['sh', '-c', 'curl -fsSL https://tailscale.com/install.sh | sh']
+  - ['tailscale', 'up', '--auth-key=${tailscale_auth_key}', '--hostname=${tailscale_hostname}'%{ if tailscale_accept_routes }, '--accept-routes'%{ endif }]
+%{ if tailscale_enable_ssh ~}
+  - ['tailscale', 'set', '--ssh']
+%{ endif ~}
+%{ endif ~}
