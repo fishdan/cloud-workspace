@@ -17,6 +17,13 @@ subnet_ids = [
 
 # Public route mode. Restrict this to your current public IP as /32.
 assign_public_ip = true
+use_elastic_ip   = false
+
+# Optional. Stops instances after sustained low CPU. Elastic IPs keep SSH stable after restarts.
+# enable_auto_stop                  = true
+# auto_stop_idle_minutes            = 60
+# auto_stop_period_seconds          = 300
+# auto_stop_cpu_threshold_percent   = 5
 
 allowed_ssh_cidr_blocks = [
   "203.0.113.10/32",

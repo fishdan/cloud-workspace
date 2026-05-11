@@ -10,7 +10,14 @@ output "private_ips" {
 
 output "public_ips" {
   description = "Public IPv4 addresses by engineer key. Values are empty when assign_public_ip is false."
-  value       = { for key, instance in aws_instance.devbox : key => instance.public_ip }
+  value = {
+    for key, instance in aws_instance.devbox : key => var.use_elastic_ip ? aws_eip.devbox[key].public_ip : instance.public_ip
+  }
+}
+
+output "elastic_ip_allocation_ids" {
+  description = "Elastic IP allocation IDs by engineer key. Empty unless use_elastic_ip is true."
+  value       = { for key, eip in aws_eip.devbox : key => eip.allocation_id }
 }
 
 output "workspace_volume_ids" {
@@ -23,7 +30,7 @@ output "ssh_config" {
   value = {
     for key, instance in aws_instance.devbox : key => <<-EOT
       Host ${local.name_prefix}-${key}
-        HostName ${var.assign_public_ip ? instance.public_ip : instance.private_ip}
+        HostName ${var.use_elastic_ip ? aws_eip.devbox[key].public_ip : (var.assign_public_ip ? instance.public_ip : instance.private_ip)}
         User ${local.enabled_engineers[key].username}
         IdentityFile ~/.ssh/id_ed25519
         IdentitiesOnly yes

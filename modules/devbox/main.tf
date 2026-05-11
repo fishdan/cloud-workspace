@@ -13,6 +13,8 @@ data "aws_vpc" "selected" {
   id = var.vpc_id
 }
 
+data "aws_region" "current" {}
+
 data "aws_subnet" "selected" {
   for_each = toset(local.subnet_ids)
   id       = each.value
@@ -52,6 +54,8 @@ locals {
   ami_id = coalesce(var.ami_id, try(data.aws_ami.ubuntu_2404[0].id, null))
 
   ssh_cidr_blocks = var.allowed_ssh_cidr_blocks == null ? [data.aws_vpc.selected.cidr_block] : var.allowed_ssh_cidr_blocks
+
+  auto_stop_evaluation_periods = max(1, ceil(var.auto_stop_idle_minutes * 60 / var.auto_stop_period_seconds))
 
   tailscale_enabled = var.tailscale_auth_key != null && var.tailscale_auth_key != ""
   tailscale_ssh_config = {
@@ -229,4 +233,47 @@ resource "aws_volume_attachment" "workspace" {
   device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.workspace[each.key].id
   instance_id = aws_instance.devbox[each.key].id
+}
+
+resource "aws_eip" "devbox" {
+  for_each = var.use_elastic_ip ? local.enabled_engineers : {}
+
+  domain   = "vpc"
+  instance = aws_instance.devbox[each.key].id
+
+  tags = merge(local.base_tags, each.value.tags, {
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}-eip"
+    Engineer = each.value.username
+    Role     = "public-ip"
+  })
+}
+
+resource "aws_cloudwatch_metric_alarm" "auto_stop" {
+  for_each = var.enable_auto_stop ? local.enabled_engineers : {}
+
+  alarm_name          = "${local.name_prefix}-${var.environment}-${each.key}-auto-stop"
+  alarm_description   = "Stop ${local.name_prefix}-${var.environment}-${each.key} after ${var.auto_stop_idle_minutes} minutes of low CPU."
+  namespace           = "AWS/EC2"
+  metric_name         = "CPUUtilization"
+  statistic           = "Average"
+  period              = var.auto_stop_period_seconds
+  evaluation_periods  = local.auto_stop_evaluation_periods
+  datapoints_to_alarm = local.auto_stop_evaluation_periods
+  threshold           = var.auto_stop_cpu_threshold_percent
+  comparison_operator = "LessThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    InstanceId = aws_instance.devbox[each.key].id
+  }
+
+  alarm_actions = [
+    "arn:aws:automate:${data.aws_region.current.name}:ec2:stop"
+  ]
+
+  tags = merge(local.base_tags, each.value.tags, {
+    Name     = "${local.name_prefix}-${var.environment}-${each.key}-auto-stop"
+    Engineer = each.value.username
+    Role     = "auto-stop"
+  })
 }

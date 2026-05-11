@@ -44,6 +44,12 @@ variable "assign_public_ip" {
   default     = false
 }
 
+variable "use_elastic_ip" {
+  description = "Allocate and associate an Elastic IP for each cloud desktop. Useful with auto-stop so SSH hostnames remain stable after restart."
+  type        = bool
+  default     = false
+}
+
 variable "allowed_ssh_cidr_blocks" {
   description = "CIDR blocks allowed to SSH to cloud desktops."
   type        = list(string)
@@ -91,6 +97,30 @@ variable "tailscale_accept_routes" {
   description = "Accept routes advertised by other Tailscale subnet routers."
   type        = bool
   default     = false
+}
+
+variable "enable_auto_stop" {
+  description = "Create CloudWatch alarms that stop cloud desktops after sustained low CPU."
+  type        = bool
+  default     = false
+}
+
+variable "auto_stop_idle_minutes" {
+  description = "How many minutes of sustained low CPU should pass before stopping a cloud desktop."
+  type        = number
+  default     = 60
+}
+
+variable "auto_stop_period_seconds" {
+  description = "CloudWatch alarm period in seconds for auto-stop CPU checks."
+  type        = number
+  default     = 300
+}
+
+variable "auto_stop_cpu_threshold_percent" {
+  description = "Average CPU utilization threshold used by the auto-stop alarm."
+  type        = number
+  default     = 5
 }
 
 variable "engineers" {

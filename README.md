@@ -34,6 +34,7 @@ The tradeoff is exposure: SSH is reachable from the internet wherever the securi
 Alternative access paths:
 
 - **Public SSH, selected for this implementation:** easiest to operate, no NAT Gateway, no overlay network, works directly with VS Code Remote SSH. The downside is that the instance has a public IP and SSH must be carefully restricted.
+- **Elastic IP with public SSH:** keeps the SSH endpoint stable across stop/start cycles. The downside is a continuing public IPv4 charge while allocated, including while the instance is stopped.
 - **Tailscale on the instance:** keeps access ergonomic and avoids opening SSH to the internet, but the instance still needs outbound internet to install and join Tailscale. In a private subnet that usually means NAT, or a prebuilt AMI.
 - **Private subnet plus NAT:** best fit for a reusable platform because the instance has no public IP while still having outbound internet for package installs and Tailscale. The downside is NAT Gateway cost and more network infrastructure.
 - **VPN, Direct Connect, or bastion:** mature private access patterns, but they add operational setup before an engineer can connect.
@@ -103,6 +104,29 @@ terraform output ssh_config
 Add the relevant host block to your SSH config, then use the VS Code Remote SSH extension to connect to that host.
 
 When `assign_public_ip = true`, the generated SSH config points at the instance public IP. When `assign_public_ip = false`, it points at the private IP and you need a private network path such as Tailscale, VPN, Direct Connect, bastion, or SSM-based tunneling.
+
+When `use_elastic_ip = true`, Terraform allocates an Elastic IP and the generated SSH config points at that stable address. This is useful with auto-stop because a stopped and restarted EC2 instance otherwise usually receives a new auto-assigned public IPv4 address.
+
+## Auto-Stop
+
+Auto-stop is optional and uses a CloudWatch alarm per workstation. When `enable_auto_stop = true`, Terraform creates an alarm that stops the EC2 instance after sustained low average CPU:
+
+```hcl
+enable_auto_stop                = true
+auto_stop_idle_minutes          = 60
+auto_stop_period_seconds        = 300
+auto_stop_cpu_threshold_percent = 5
+```
+
+This is CPU-based inactivity, not keyboard or editor activity. It works well as a cost guardrail, but a quiet SSH or VS Code session can still be considered idle if CPU remains below the threshold for the whole window. Increase the idle minutes or threshold behavior if that is too aggressive.
+
+Stopping the instance preserves the encrypted workspace EBS volume. If `use_elastic_ip = true`, the SSH endpoint remains stable after you start the instance again.
+
+To start a stopped workstation, use the AWS console or CLI:
+
+```bash
+aws ec2 start-instances --instance-ids i-0123456789abcdef0
+```
 
 ## Optional Tailscale Access
 
@@ -191,7 +215,9 @@ This friction is intentional.
 
 ## Cost Considerations
 
-Main cost drivers are EC2 instance hours, gp3 root volumes, gp3 workspace volumes, snapshots, and data transfer. Instances in this v1 do not auto-stop. Stop unused instances manually or add a separate scheduling mechanism later.
+Main cost drivers are EC2 instance hours, gp3 root volumes, gp3 workspace volumes, snapshots, and data transfer. Enable auto-stop for a cost guardrail, and stop unused instances manually when needed.
+
+Public IPv4 addresses are also billed hourly. AWS charges the same public IPv4 hourly rate for auto-assigned public IPv4 addresses while in use and Elastic IPs while allocated. An Elastic IP keeps costing money even while the EC2 instance is stopped.
 
 ## Security Assumptions
 
@@ -210,6 +236,6 @@ Main cost drivers are EC2 instance hours, gp3 root volumes, gp3 workspace volume
 - Application repositories and dependencies.
 - Long-running services inside the workstation.
 - GUI access.
-- NAT gateways, golden AMIs, SSO, DCV, and auto-shutdown.
+- NAT gateways, golden AMIs, SSO, and DCV.
 
 These can be added later without changing the core principle: infrastructure is reproducible, data is persistent, and instances are replaceable.
