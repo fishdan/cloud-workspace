@@ -1,6 +1,6 @@
 # devbox Module
 
-Creates private Ubuntu cloud desktops for a map of engineers.
+Creates Ubuntu cloud desktops for a map of engineers.
 
 ## Interface
 
